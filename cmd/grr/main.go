@@ -68,6 +68,7 @@ func main() {
 		configCmd(registry),
 		serveCmd(registry),
 		selfUpdateCmd(),
+		convertCmd(),
 	)
 
 	// Run!
