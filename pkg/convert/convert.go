@@ -2,6 +2,8 @@ package convert
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/grafana/grafana-openapi-client-go/models"
 	"github.com/grafana/grizzly/pkg/convert/promtografana"
@@ -15,10 +17,16 @@ const (
 )
 
 func PrometheusToGrafanaResource(filename string) ([]grizzly.Resource, error) {
-	grafanaGroups, err := promtografana.PrometheusRulesToGrafana(filename)
+	file, err := os.Open(filename)
 	if err != nil {
-		fmt.Printf("Error converting Prometheus rules: %v\n", err)
-		return nil, err
+		return nil, fmt.Errorf("failed to open file: %w", err)
+	}
+	defer file.Close()
+
+	namespace := filepath.Base(filename)
+	grafanaGroups, err := promtografana.PrometheusRulesToGrafana(namespace, file)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert Prometheus rules: %w", err)
 	}
 
 	return convertGrafanaToGrizzly(grafanaGroups)

@@ -2,8 +2,7 @@ package promtografana
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
+	"io"
 	"strings"
 
 	"github.com/go-openapi/strfmt"
@@ -21,8 +20,8 @@ const (
 )
 
 // PrometheusRulesToGrafana converts a Prometheus rules file into Grafana alert rule groups.
-func PrometheusRulesToGrafana(filename string) ([]models.AlertRuleGroup, error) {
-	promFile, err := readPrometheusFile(filename)
+func PrometheusRulesToGrafana(namespace string, reader io.Reader) ([]models.AlertRuleGroup, error) {
+	promFile, err := readPrometheusRules(reader)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +38,7 @@ func PrometheusRulesToGrafana(filename string) ([]models.AlertRuleGroup, error) 
 	var grafanaGroups []models.AlertRuleGroup
 
 	for _, group := range promFile.Groups {
-		folderUID := getFolderUID(filename)
+		folderUID := getFolderUID(namespace)
 		grafanaGroup, err := convertPrometheusToGrafanaRuleGroup(folderUID, group)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert rule group '%s': %w", group.Name, err)
@@ -50,15 +49,9 @@ func PrometheusRulesToGrafana(filename string) ([]models.AlertRuleGroup, error) 
 	return grafanaGroups, nil
 }
 
-func readPrometheusFile(filename string) (*PrometheusRulesFile, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("failed to open file '%s': %w", filename, err)
-	}
-	defer file.Close()
-
+func readPrometheusRules(reader io.Reader) (*PrometheusRulesFile, error) {
 	var ruleFile PrometheusRulesFile
-	decoder := yaml.NewDecoder(file)
+	decoder := yaml.NewDecoder(reader)
 	if err := decoder.Decode(&ruleFile); err != nil {
 		return nil, fmt.Errorf("failed to decode YAML: %w", err)
 	}
@@ -70,9 +63,7 @@ func validatePrometheusRule(rule PrometheusRule) error {
 	if rule.KeepFiringFor != "" {
 		return fmt.Errorf("keep_firing_for is not supported")
 	}
-	if rule.Record != "" {
-		return fmt.Errorf("record is not supported")
-	}
+
 	return nil
 }
 
@@ -114,7 +105,6 @@ func prometheusToGrafanaRule(folderUID string, group string, rule PrometheusRule
 		Condition:    stringPtr("B"),
 		Data: []*models.AlertQuery{
 			alertQueryNode(rule.Expr),
-			alertConditionNode(),
 		},
 		For:         &duration,
 		IsPaused:    false,
@@ -125,6 +115,15 @@ func prometheusToGrafanaRule(folderUID string, group string, rule PrometheusRule
 		},
 		Provenance: "",
 		RuleGroup:  stringPtr(group),
+	}
+
+	if rule.Record != "" {
+		result.Record = &models.Record{
+			From:   stringPtr("A"),
+			Metric: stringPtr(rule.Record),
+		}
+	} else {
+		result.Data = append(result.Data, alertConditionNode())
 	}
 
 	return result, nil
@@ -201,8 +200,7 @@ func stringPtr(s string) *string {
 	return &s
 }
 
-func getFolderUID(filename string) string {
-	filename = filepath.Base(filename)
-	folderUID := strings.ReplaceAll(filename, ".", "_")
+func getFolderUID(namespace string) string {
+	folderUID := strings.ReplaceAll(namespace, ".", "_")
 	return folderUID
 }

@@ -7,7 +7,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const prometheusYAML = `
+const (
+	prometheusYAML = `
 groups:
 - name: example
   rules:
@@ -34,6 +35,28 @@ groups:
       summary: "This alert is always firing"
       description: "This alert is always firing (current value: {{ $value }}s)"
 `
+
+	prometheusYAMLWithRecordingRules = `
+groups:
+- name: example
+  rules:
+  - record: job:request_duration_seconds:avg
+    expr: avg(rate(api_http_request_duration_seconds_sum[5m])) by (job)
+    labels:
+      severity: low
+    annotations:
+      summary: "Average request duration for job {{ $labels.job }}"
+      description: "Average request duration in seconds for job {{ $labels.job }} over the last 5 minutes."
+
+  - record: job:cpu_usage:avg
+    expr: avg(rate(cpu_usage_seconds_total[5m])) by (job)
+    labels:
+      severity: low
+    annotations:
+      summary: "Average CPU usage for job {{ $labels.job }}"
+      description: "Average CPU usage in seconds for job {{ $labels.job }} over the last 5 minutes."
+`
+)
 
 func TestPrometheusToGrafanaResource(t *testing.T) {
 	tmpFile, err := os.CreateTemp("", "prometheus-rules-*.yaml")
@@ -70,5 +93,45 @@ func TestPrometheusToGrafanaResource(t *testing.T) {
 	for i, rule := range rules {
 		ruleMap := rule.(map[string]interface{})
 		require.Equal(t, expectedTitles[i], ruleMap["title"], "expected rule title to match")
+	}
+}
+
+func TestPrometheusToGrafanaRecordingRules(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "prometheus-recording-rules-*.yaml")
+	require.NoError(t, err, "failed to create temp file")
+	defer os.Remove(tmpFile.Name())
+
+	_, err = tmpFile.WriteString(prometheusYAMLWithRecordingRules)
+	require.NoError(t, err, "failed to write YAML to temp file")
+	require.NoError(t, tmpFile.Close(), "failed to close temp file")
+
+	resources, err := PrometheusToGrafanaResource(tmpFile.Name())
+	require.NoError(t, err, "failed to convert Prometheus rules to Grafana resources")
+
+	require.Len(t, resources, 2, "expected 2 resources (1 folder + 1 rule group)")
+
+	folder := resources[0]
+	require.Equal(t, "grizzly.grafana.com/v1alpha1", folder.APIVersion())
+	require.Equal(t, "DashboardFolder", folder.Kind())
+
+	recordingRuleGroup := resources[1]
+	require.Equal(t, "grizzly.grafana.com/v1alpha1", recordingRuleGroup.APIVersion())
+	require.Equal(t, "AlertRuleGroup", recordingRuleGroup.Kind())
+
+	// Verify the rules in the recording rule group
+	spec := recordingRuleGroup.Spec()
+	require.NotNil(t, spec, "recording rule group spec should not be nil")
+	require.Equal(t, "example", spec["title"], "expected recording rule group title to match Prometheus group name")
+
+	rules := spec["rules"].([]interface{})
+	require.Len(t, rules, 2, "expected 2 recording rules in the rule group")
+
+	// Check each recording rule's record name
+	expectedRecords := []string{"job:request_duration_seconds:avg", "job:cpu_usage:avg"}
+	for i, rule := range rules {
+		ruleMap := rule.(map[string]interface{})
+		ruleMapRecord := ruleMap["record"].(map[string]interface{})
+		require.Equal(t, expectedRecords[i], ruleMapRecord["metric"], "expected record name to match")
+		require.Equal(t, "A", ruleMapRecord["from"], "expected from to be A")
 	}
 }

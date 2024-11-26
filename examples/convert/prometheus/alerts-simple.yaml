@@ -1,6 +1,12 @@
 groups:
 - name: prometheus-rule-group
   rules:
+  - alert: RecordingRule1
+    expr: vector(1)
+    record: grr_recording_rule_1
+    labels:
+      severity: warning
+
   - alert: InstanceDown
     expr: up == 0
     for: 5m
